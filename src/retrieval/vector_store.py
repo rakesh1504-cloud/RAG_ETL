@@ -21,7 +21,10 @@ class VectorStore:
             try:
                 import chromadb
                 client = chromadb.PersistentClient(path=self.persist_dir)
-                self._collection = client.get_or_create_collection(self.collection_name)
+                self._collection = client.get_or_create_collection(
+                    self.collection_name,
+                    metadata={"hnsw:space": "cosine"},
+                )
             except ImportError:
                 raise ImportError("Install chromadb: pip install chromadb")
         return self._collection
