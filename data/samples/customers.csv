@@ -1,0 +1,11 @@
+customer_id,first_name,last_name,email,phone,age,signup_date,status
+C001,Alice,Johnson,alice.johnson@example.com,(555) 101-2030,34,2023-03-15,active
+C002,Bob,Smith,bob.smith@example.com,(555) 202-3141,28,2022-11-01,active
+C003,Carol,White,carol.white@example.com,(555) 303-4252,52,2021-07-22,inactive
+C004,David,Brown,david.brown@example.com,(555) 404-5363,45,2023-01-10,active
+C005,Eva,Garcia,eva.garcia@example.com,(555) 505-6474,19,2024-02-28,active
+C006,Frank,Lee,frank.lee@example.com,(555) 606-7585,61,2020-05-14,active
+C007,Grace,Kim,grace.kim@example.com,(555) 707-8696,37,2022-09-03,active
+C008,Henry,Adams,henry.adams@example.com,(555) 808-9707,23,2023-06-19,suspended
+C009,Iris,Martinez,iris.martinez@example.com,(555) 909-0818,48,2021-12-01,active
+C010,Jack,Taylor,jack.taylor@example.com,(555) 010-1929,55,2019-08-30,active

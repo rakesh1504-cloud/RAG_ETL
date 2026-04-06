@@ -1,0 +1,6 @@
+product_id|product_name|category|unit_price
+P001|Basic Subscription|Subscription|120.00
+P002|Pro Subscription|Subscription|310.00
+P003|Add-on Pack A|Add-on|45.50
+P004|Add-on Pack B|Add-on|89.99
+P005|Enterprise Module|Module|220.00
