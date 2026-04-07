@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM + RAG ETL System Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --card-bg:   #161b22;
+      --border:    #30363d;
+      --text:      #c9d1d9;
+      --text-dim:  #8b949e;
+      --cyan:      #58a6ff;
+      --yellow:    #e3b341;
+      --green:     #3fb950;
+      --purple:    #bc8cff;
+      --orange:    #f0883e;
+      --red:       #f85149;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ─── Layout ─── */
+    .page-wrapper {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* ─── Header ─── */
+    .site-header {
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px 16px;
+      background: var(--card-bg);
+    }
+    .site-header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #f0f6fc;
+      letter-spacing: -0.3px;
+    }
+    .site-header p {
+      color: var(--text-dim);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    .badge-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid;
+    }
+    .badge-cyan   { color: var(--cyan);   border-color: var(--cyan);   background: rgba(88,166,255,.08); }
+    .badge-yellow { color: var(--yellow); border-color: var(--yellow); background: rgba(227,179,65,.08); }
+    .badge-green  { color: var(--green);  border-color: var(--green);  background: rgba(63,185,80,.08); }
+    .badge-purple { color: var(--purple); border-color: var(--purple); background: rgba(188,140,255,.08); }
+    .badge-orange { color: var(--orange); border-color: var(--orange); background: rgba(240,136,62,.08); }
+
+    /* ─── Navigation Tabs ─── */
+    .nav-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 32px;
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .nav-tab {
+      padding: 12px 20px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+      transition: color .15s, border-color .15s;
+      user-select: none;
+    }
+    .nav-tab:hover { color: var(--text); }
+    .nav-tab.active {
+      color: #f0f6fc;
+      border-bottom-color: var(--cyan);
+    }
+
+    /* ─── Main Content ─── */
+    .main-content {
+      flex: 1;
+      padding: 28px 32px;
+      overflow: auto;
+    }
+
+    /* ─── Section Panel ─── */
+    .section-panel { display: none; }
+    .section-panel.active { display: block; }
+
+    .section-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .section-icon {
+      font-size: 28px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .section-meta h2 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #f0f6fc;
+    }
+    .section-meta .section-num {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--cyan);
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    .section-meta .section-desc {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    /* ─── Diagram Card ─── */
+    .diagram-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .diagram-card-header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .diagram-card-header .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot-red    { background: #f85149; }
+    .dot-yellow { background: var(--yellow); }
+    .dot-green  { background: var(--green); }
+    .diagram-card-body {
+      padding: 32px 20px;
+      overflow-x: auto;
+    }
+    .diagram-card-body .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+
+    /* ─── File Tree ─── */
+    .tree-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+    .tree-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .tree-card-title {
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tree-file {
+      font-size: 12px;
+      color: var(--text-dim);
+      padding: 2px 0 2px 16px;
+      position: relative;
+    }
+    .tree-file::before {
+      content: "├─";
+      position: absolute;
+      left: 0;
+      color: var(--border);
+    }
+    .tree-file:last-child::before { content: "└─"; }
+
+    /* ─── Status Bar ─── */
+    .status-bar {
+      border-top: 1px solid var(--border);
+      background: var(--card-bg);
+      padding: 7px 32px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 11.5px;
+      color: var(--text-dim);
+      flex-wrap: wrap;
+    }
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      flex-shrink: 0;
+    }
+    .status-sep {
+      color: var(--border);
+    }
+
+    /* Mermaid override: ensure dark theme renders on dark bg */
+    .mermaid svg { max-width: 100%; }
+
+    @media (max-width: 640px) {
+      .main-content, .site-header, .nav-tabs, .status-bar { padding-left: 16px; padding-right: 16px; }
+      .nav-tab { padding: 10px 12px; font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+<div class="page-wrapper">
+
+  <!-- ═══════════════════════════ HEADER ═══════════════════════════ -->
+  <header class="site-header">
+    <h1>LLM + RAG ETL System Architecture</h1>
+    <p>End-to-end architecture: ETL pipeline ingestion → embedding → hybrid retrieval → LLM generation</p>
+    <div class="badge-row">
+      <span class="badge badge-cyan">Python ETL</span>
+      <span class="badge badge-yellow">SAS ETL</span>
+      <span class="badge badge-purple">ChromaDB · BM25</span>
+      <span class="badge badge-green">Claude claude-opus-4-6 · GPT-4o</span>
+      <span class="badge badge-orange">TF-IDF · OpenAI Embeddings</span>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════ TABS ═══════════════════════════ -->
+  <nav class="nav-tabs" role="tablist">
+    <div class="nav-tab active" data-tab="overview"   role="tab">⚙️  System Overview</div>
+    <div class="nav-tab"        data-tab="ingestion"  role="tab">📥  Ingestion Pipeline</div>
+    <div class="nav-tab"        data-tab="retrieval"  role="tab">🔍  Query &amp; Retrieval</div>
+    <div class="nav-tab"        data-tab="components" role="tab">🗺️  Component Map</div>
+  </nav>
+
+  <!-- ═══════════════════════════ MAIN ═══════════════════════════ -->
+  <main class="main-content">
+
+    <!-- ───────────── SECTION 1: System Overview ───────────── -->
+    <section class="section-panel active" id="panel-overview">
+      <div class="section-header">
+        <div class="section-icon">⚙️</div>
+        <div class="section-meta">
+          <div class="section-num">Section 1 · System Overview</div>
+          <h2>Three-Phase Architecture: Ingest → Retrieve → Generate</h2>
+          <div class="section-desc">High-level data flow across the three main operational phases of the RAG system.</div>
+        </div>
+      </div>
+
+      <div class="diagram-card">
+        <div class="diagram-card-header">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+          <span style="margin-left:6px;">system_overview.mmd — flowchart LR</span>
+        </div>
+        <div class="diagram-card-body">
+          <div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"primaryColor": "#161b22", "primaryTextColor": "#c9d1d9", "primaryBorderColor": "#30363d", "lineColor": "#58a6ff", "secondaryColor": "#0d1117", "tertiaryColor": "#1f2937", "background": "#0d1117", "mainBkg": "#161b22", "nodeBorder": "#30363d", "clusterBkg": "#0d1117", "titleColor": "#f0f6fc", "edgeLabelBackground": "#161b22"}}}%%
+flowchart LR
+  subgraph P1["⚙️ Phase 1 — INGEST"]
+    direction TB
+    SF["📁 Source Files\n.py · .sas · .md · .yaml"]
+    CK["✂️ Chunkers\nCodeChunker · DocChunker"]
+    EM["🔢 Embedder\nTF-IDF / SentenceTransformer"]
+    DB["🗄️ ChromaDB\netl_codebase collection"]
+    SF --> CK --> EM --> DB
+  end
+
+  subgraph P2["🔍 Phase 2 — RETRIEVE"]
+    direction TB
+    UQ["💬 User Query"]
+    EQ["🔢 Embed Query\nTF-IDF offline / OpenAI"]
+    HS["⚡ Hybrid Search\nBM25 + Vector Cosine"]
+    RR["📊 RRF Ranked Hits\nReciprocal Rank Fusion"]
+    UQ --> EQ --> HS --> RR
+  end
+
+  subgraph P3["🤖 Phase 3 — GENERATE"]
+    direction TB
+    CA["📝 Context Assembly\nNumbered snippets [N]"]
+    LM["🧠 LLM Engine\nClaude claude-opus-4-6 · GPT-4o"]
+    AN["✅ Answer + Sources\n+ Confidence + Tokens"]
+    CA --> LM --> AN
+  end
+
+  DB -->|"top-K chunks"| P2
+  RR -->|"ranked context"| CA
+
+  style P1 fill:#0d1117,stroke:#58a6ff,stroke-width:2px,color:#c9d1d9
+  style P2 fill:#0d1117,stroke:#bc8cff,stroke-width:2px,color:#c9d1d9
+  style P3 fill:#0d1117,stroke:#3fb950,stroke-width:2px,color:#c9d1d9
+  style SF fill:#161b22,stroke:#f0883e,color:#f0883e
+  style CK fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style EM fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style DB fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style UQ fill:#161b22,stroke:#3fb950,color:#3fb950
+  style EQ fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style HS fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style RR fill:#161b22,stroke:#e3b341,color:#e3b341
+  style CA fill:#161b22,stroke:#f0883e,color:#f0883e
+  style LM fill:#161b22,stroke:#3fb950,color:#3fb950
+  style AN fill:#161b22,stroke:#3fb950,color:#3fb950
+          </div>
+        </div>
+      </div>
+
+      <!-- Project Structure Tree -->
+      <div style="margin-top:28px;">
+        <h3 style="font-size:14px;font-weight:700;color:#f0f6fc;margin-bottom:16px;">Project Directory Structure</h3>
+        <div class="tree-grid">
+          <div class="tree-card">
+            <div class="tree-card-title" style="color:var(--cyan);">📂 etl/python/</div>
+            <div class="tree-file">extract.py</div>
+            <div class="tree-file">transform.py</div>
+            <div class="tree-file">load.py</div>
+            <div class="tree-file">pipeline.py</div>
+          </div>
+          <div class="tree-card">
+            <div class="tree-card-title" style="color:var(--yellow);">📂 etl/sas/</div>
+            <div class="tree-file">01_extract.sas</div>
+            <div class="tree-file">02_transform.sas</div>
+            <div class="tree-file">03_load.sas</div>
+            <div class="tree-file">04_master_etl.sas</div>
+            <div class="tree-file">macros/etl_macros.sas</div>
+          </div>
+          <div class="tree-card">
+            <div class="tree-card-title" style="color:var(--orange);">📂 data/schemas/ &amp; docs/data_contracts/</div>
+            <div class="tree-file">customers_schema.yaml</div>
+            <div class="tree-file">transactions_schema.yaml</div>
+            <div class="tree-file">customer_contract.md</div>
+            <div class="tree-file">transaction_contract.md</div>
+          </div>
+          <div class="tree-card">
+            <div class="tree-card-title" style="color:var(--cyan);">📂 src/processing/</div>
+            <div class="tree-file">code_chunker.py</div>
+            <div class="tree-file">doc_chunker.py</div>
+          </div>
+          <div class="tree-card">
+            <div class="tree-card-title" style="color:var(--purple);">📂 src/embedding/</div>
+            <div class="tree-file">embedder.py</div>
+            <div class="tree-file">openai_embedder.py</div>
+          </div>
+          <div class="tree-card">
+            <div class="tree-card-title" style="color:var(--purple);">📂 src/retrieval/</div>
+            <div class="tree-file">vector_store.py</div>
+            <div class="tree-file">hybrid_retriever.py</div>
+          </div>
+          <div class="tree-card">
+            <div class="tree-card-title" style="color:var(--green);">📂 src/llm/</div>
+            <div class="tree-file">retrieval_engine.py</div>
+            <div class="tree-file">openai_retrieval_engine.py</div>
+          </div>
+          <div class="tree-card">
+            <div class="tree-card-title" style="color:var(--cyan);">📂 src/ingestion/ &amp; scripts/</div>
+            <div class="tree-file">codebase_loader.py</div>
+            <div class="tree-file">index_etl_codebase.py</div>
+            <div class="tree-file">query_codebase.py</div>
+            <div class="tree-file">query_openai.py</div>
+            <div class="tree-file">browse_chromadb.py</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────── SECTION 2: Ingestion Pipeline ───────────── -->
+    <section class="section-panel" id="panel-ingestion">
+      <div class="section-header">
+        <div class="section-icon">📥</div>
+        <div class="section-meta">
+          <div class="section-num">Section 2 · Ingestion Pipeline</div>
+          <h2>Source Files → Chunks → Embeddings → ChromaDB</h2>
+          <div class="section-desc">Detailed ingestion flow: dual-track chunking (code vs. docs), embedding with TF-IDF fallback, and vector storage.</div>
+        </div>
+      </div>
+
+      <div class="diagram-card">
+        <div class="diagram-card-header">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+          <span style="margin-left:6px;">ingestion_pipeline.mmd — flowchart TD</span>
+        </div>
+        <div class="diagram-card-body">
+          <div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"primaryColor": "#161b22", "primaryTextColor": "#c9d1d9", "primaryBorderColor": "#30363d", "lineColor": "#58a6ff", "secondaryColor": "#0d1117", "tertiaryColor": "#1f2937", "background": "#0d1117", "mainBkg": "#161b22", "nodeBorder": "#30363d", "clusterBkg": "#0d1117", "titleColor": "#f0f6fc", "edgeLabelBackground": "#161b22"}}}%%
+flowchart TD
+  CL["📦 codebase_loader.py\n<i>src/ingestion/codebase_loader.py</i>"]
+
+  CL -->|".py · .sas files"| CF["💻 Code Files\n.py · .sas"]
+  CL -->|".md · .yaml files"| DF["📄 Doc Files\n.md · .yaml"]
+
+  subgraph CTRACK["Code Track"]
+    direction TB
+    CF --> CC["✂️ CodeChunker\n<i>src/processing/code_chunker.py</i>"]
+    CC --> PY["🐍 Python AST Parser\nfunctions · classes · decorators"]
+    CC --> SA["📊 SAS Regex Parser\nproc steps · macros · data steps"]
+    PY --> CM["📦 CodeChunks\n+ metadata: language/chunk_type/lines"]
+    SA --> CM
+  end
+
+  subgraph DTRACK["Doc Track"]
+    direction TB
+    DF --> DC["✂️ DocChunker\n<i>src/processing/doc_chunker.py</i>"]
+    DC --> MH["📝 Markdown Heading Splitter\nsections by H1–H3"]
+    DC --> YK["🗂️ YAML Key Extractor\ntop-level keys + values"]
+    MH --> DM["📦 DocChunks\n+ metadata: section/heading"]
+    YK --> DM
+  end
+
+  CM --> EMB
+  DM --> EMB
+
+  subgraph EMBED["Embedding Layer"]
+    direction TB
+    EMB["🔢 Embedder\n<i>src/embedding/embedder.py</i>"]
+    EMB -->|"primary"| ST["🤗 SentenceTransformer\nall-MiniLM-L6-v2"]
+    EMB -->|"fallback if no GPU/model"| TFIDF["📐 TF-IDF + SVD\nTruncatedSVD 384-dim"]
+    TFIDF -->|"persist"| PKL["💾 tfidf_embedder.pkl\nconsistent query-time embeddings"]
+    ST --> EC["✅ EmbeddedChunks\nvectors + metadata"]
+    TFIDF --> EC
+  end
+
+  EC --> VS
+
+  subgraph STORE["Vector Store"]
+    direction TB
+    VS["🗄️ VectorStore\n<i>src/retrieval/vector_store.py</i>"]
+    VS --> CHR["🟣 ChromaDB\ncollection: etl_codebase\ncosine distance · persistent on disk"]
+    CHR --> IDX["🗂️ Indexed Documents\n106 chunks · id · embedding · metadata"]
+  end
+
+  style CTRACK fill:#0d1117,stroke:#58a6ff,stroke-width:1.5px
+  style DTRACK fill:#0d1117,stroke:#f0883e,stroke-width:1.5px
+  style EMBED  fill:#0d1117,stroke:#bc8cff,stroke-width:1.5px
+  style STORE  fill:#0d1117,stroke:#3fb950,stroke-width:1.5px
+
+  style CL  fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style CF  fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style DF  fill:#161b22,stroke:#f0883e,color:#f0883e
+  style CC  fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style PY  fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style SA  fill:#161b22,stroke:#e3b341,color:#e3b341
+  style CM  fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style DC  fill:#161b22,stroke:#f0883e,color:#f0883e
+  style MH  fill:#161b22,stroke:#f0883e,color:#f0883e
+  style YK  fill:#161b22,stroke:#f0883e,color:#f0883e
+  style DM  fill:#161b22,stroke:#f0883e,color:#f0883e
+  style EMB fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style ST  fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style TFIDF fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style PKL fill:#161b22,stroke:#e3b341,color:#e3b341
+  style EC  fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style VS  fill:#161b22,stroke:#3fb950,color:#3fb950
+  style CHR fill:#161b22,stroke:#3fb950,color:#3fb950
+  style IDX fill:#161b22,stroke:#3fb950,color:#3fb950
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────── SECTION 3: Query & Retrieval ───────────── -->
+    <section class="section-panel" id="panel-retrieval">
+      <div class="section-header">
+        <div class="section-icon">🔍</div>
+        <div class="section-meta">
+          <div class="section-num">Section 3 · Query &amp; Retrieval Pipeline</div>
+          <h2>User Question → Hybrid Search → LLM Answer</h2>
+          <div class="section-desc">Query expansion, dual-path embedding, BM25 + vector hybrid search with RRF fusion, and streaming LLM generation.</div>
+        </div>
+      </div>
+
+      <div class="diagram-card">
+        <div class="diagram-card-header">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+          <span style="margin-left:6px;">retrieval_pipeline.mmd — flowchart TD</span>
+        </div>
+        <div class="diagram-card-body">
+          <div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"primaryColor": "#161b22", "primaryTextColor": "#c9d1d9", "primaryBorderColor": "#30363d", "lineColor": "#58a6ff", "secondaryColor": "#0d1117", "tertiaryColor": "#1f2937", "background": "#0d1117", "mainBkg": "#161b22", "nodeBorder": "#30363d", "clusterBkg": "#0d1117", "titleColor": "#f0f6fc", "edgeLabelBackground": "#161b22"}}}%%
+flowchart TD
+  UQ["💬 User Question\nnatural language query"]
+  HIS["🔄 Multi-turn History\nconversation context maintained"]
+  HIS --> UQ
+
+  UQ --> QE
+  subgraph QEXP["Optional Query Expansion"]
+    QE["🤖 Claude Haiku\nquery expansion / reformulation\n<i>optional step</i>"]
+  end
+
+  QE --> EQ
+
+  subgraph EQSTEP["Embed Query"]
+    direction LR
+    EQ["🔢 Embed Query"]
+    EQ -->|"offline mode"| TQ["📐 TF-IDF Transform\nload tfidf_embedder.pkl"]
+    EQ -->|"API mode"| OQ["☁️ OpenAI\ntext-embedding-3-small"]
+  end
+
+  TQ --> SEARCH
+  OQ --> SEARCH
+
+  subgraph SEARCH["Parallel Hybrid Search"]
+    direction LR
+    VS2["🟣 Dense Vector Search\nChromaDB cosine similarity\noptional metadata filter:\nlanguage · chunk_type"]
+    BM["📖 Sparse BM25 Search\nrank_bm25 · exact keyword\nmacro names · column names"]
+  end
+
+  VS2 --> RRF
+  BM  --> RRF
+
+  RRF["🔀 Reciprocal Rank Fusion\nRRF merge · score = Σ 1/(k+rank)\nTop-K ranked chunks selected"]
+
+  RRF --> CA
+
+  subgraph CTX["Context Assembly"]
+    CA["📝 Context Assembly\nnumbered snippets [1]…[N]\nfile path · line range · chunk_type"]
+  end
+
+  CA --> LLM
+
+  subgraph LLMGEN["LLM Generation"]
+    direction LR
+    LLM["🧠 LLM Router"]
+    LLM -->|"default"| CLAUDE["🟠 Claude claude-opus-4-6\nadaptive thinking enabled\nstreaming · Anthropic SDK\n<i>src/llm/retrieval_engine.py</i>"]
+    LLM -->|"openai mode"| GPT["🟢 GPT-4o\norg insights system prompt\nstreaming · OpenAI SDK\n<i>src/llm/openai_retrieval_engine.py</i>"]
+  end
+
+  CLAUDE --> OUT
+  GPT    --> OUT
+
+  subgraph OUTPUT["Output"]
+    OUT["✅ Structured Answer\n📌 Source Attribution [N]\n📊 Confidence Score: high / medium / low\n🔢 Token Usage stats"]
+  end
+
+  style QEXP  fill:#0d1117,stroke:#e3b341,stroke-width:1.5px
+  style EQSTEP fill:#0d1117,stroke:#bc8cff,stroke-width:1.5px
+  style SEARCH fill:#0d1117,stroke:#bc8cff,stroke-width:1.5px
+  style CTX   fill:#0d1117,stroke:#f0883e,stroke-width:1.5px
+  style LLMGEN fill:#0d1117,stroke:#3fb950,stroke-width:1.5px
+  style OUTPUT fill:#0d1117,stroke:#3fb950,stroke-width:1.5px
+
+  style UQ    fill:#161b22,stroke:#3fb950,color:#3fb950
+  style HIS   fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style QE    fill:#161b22,stroke:#e3b341,color:#e3b341
+  style EQ    fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style TQ    fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style OQ    fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style VS2   fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style BM    fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style RRF   fill:#161b22,stroke:#e3b341,color:#e3b341
+  style CA    fill:#161b22,stroke:#f0883e,color:#f0883e
+  style LLM   fill:#161b22,stroke:#3fb950,color:#3fb950
+  style CLAUDE fill:#161b22,stroke:#f0883e,color:#f0883e
+  style GPT   fill:#161b22,stroke:#3fb950,color:#3fb950
+  style OUT   fill:#161b22,stroke:#3fb950,color:#3fb950
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────── SECTION 4: Component Map ───────────── -->
+    <section class="section-panel" id="panel-components">
+      <div class="section-header">
+        <div class="section-icon">🗺️</div>
+        <div class="section-meta">
+          <div class="section-num">Section 4 · Component Map</div>
+          <h2>Module Dependency Graph</h2>
+          <div class="section-desc">All Python modules grouped by directory with import/call relationships shown as directed edges.</div>
+        </div>
+      </div>
+
+      <div class="diagram-card">
+        <div class="diagram-card-header">
+          <span class="dot dot-red"></span>
+          <span class="dot dot-yellow"></span>
+          <span class="dot dot-green"></span>
+          <span style="margin-left:6px;">component_map.mmd — flowchart TD</span>
+        </div>
+        <div class="diagram-card-body">
+          <div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"primaryColor": "#161b22", "primaryTextColor": "#c9d1d9", "primaryBorderColor": "#30363d", "lineColor": "#58a6ff", "secondaryColor": "#0d1117", "tertiaryColor": "#1f2937", "background": "#0d1117", "mainBkg": "#161b22", "nodeBorder": "#30363d", "clusterBkg": "#0d1117", "titleColor": "#f0f6fc", "edgeLabelBackground": "#161b22"}}}%%
+flowchart TD
+  subgraph SCRIPTS["📜 scripts/"]
+    IEC["index_etl_codebase.py"]
+    QCC["query_codebase.py"]
+    QOA["query_openai.py"]
+    BCH["browse_chromadb.py"]
+  end
+
+  subgraph INGEST["📦 src/ingestion/"]
+    CBL["codebase_loader.py"]
+  end
+
+  subgraph PROC["✂️ src/processing/"]
+    CCH["code_chunker.py\n<i>Python AST + SAS regex</i>"]
+    DCH["doc_chunker.py\n<i>Markdown sections + YAML keys</i>"]
+  end
+
+  subgraph EMBD["🔢 src/embedding/"]
+    EMB["embedder.py\n<i>TF-IDF fallback / SentenceTransformer</i>"]
+    OEM["openai_embedder.py\n<i>text-embedding-3-small</i>"]
+  end
+
+  subgraph RETR["🔍 src/retrieval/"]
+    VST["vector_store.py\n<i>ChromaDB wrapper</i>"]
+    HYB["hybrid_retriever.py\n<i>BM25 + Vector + RRF</i>"]
+  end
+
+  subgraph LLM["🧠 src/llm/"]
+    REN["retrieval_engine.py\n<i>Claude claude-opus-4-6 + adaptive thinking</i>"]
+    OAR["openai_retrieval_engine.py\n<i>GPT-4o + org insights prompt</i>"]
+  end
+
+  subgraph EXT["📦 External SDKs"]
+    ANT["anthropic SDK"]
+    OAI["openai SDK"]
+    BM25["rank_bm25"]
+    CHR2["chromadb"]
+  end
+
+  %% Scripts → entry points
+  IEC -->|"orchestrates"| CBL
+  QCC -->|"invokes"| REN
+  QOA -->|"invokes"| OAR
+  BCH -->|"browses"| VST
+  BCH -->|"embeds queries"| EMB
+
+  %% Loader → processors
+  CBL -->|"calls"| CCH
+  CBL -->|"calls"| DCH
+  CBL -->|"calls"| EMB
+  CBL -->|"calls"| VST
+
+  %% Retrieval engine → dependencies
+  REN -->|"imports"| EMB
+  REN -->|"imports"| HYB
+  REN -->|"imports"| VST
+  REN -->|"uses"| ANT
+
+  %% OpenAI engine → dependencies
+  OAR -->|"imports"| OEM
+  OAR -->|"imports"| VST
+  OAR -->|"uses"| OAI
+
+  %% Hybrid retriever
+  HYB -->|"imports"| VST
+  HYB -->|"uses"| BM25
+
+  %% Vector store → ChromaDB
+  VST -->|"uses"| CHR2
+
+  style SCRIPTS fill:#0d1117,stroke:#e3b341,stroke-width:1.5px
+  style INGEST  fill:#0d1117,stroke:#58a6ff,stroke-width:1.5px
+  style PROC    fill:#0d1117,stroke:#58a6ff,stroke-width:1.5px
+  style EMBD    fill:#0d1117,stroke:#bc8cff,stroke-width:1.5px
+  style RETR    fill:#0d1117,stroke:#bc8cff,stroke-width:1.5px
+  style LLM     fill:#0d1117,stroke:#3fb950,stroke-width:1.5px
+  style EXT     fill:#0d1117,stroke:#30363d,stroke-width:1.5px
+
+  style IEC  fill:#161b22,stroke:#e3b341,color:#e3b341
+  style QCC  fill:#161b22,stroke:#e3b341,color:#e3b341
+  style QOA  fill:#161b22,stroke:#e3b341,color:#e3b341
+  style BCH  fill:#161b22,stroke:#e3b341,color:#e3b341
+  style CBL  fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style CCH  fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style DCH  fill:#161b22,stroke:#f0883e,color:#f0883e
+  style EMB  fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style OEM  fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style VST  fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style HYB  fill:#161b22,stroke:#bc8cff,color:#bc8cff
+  style REN  fill:#161b22,stroke:#3fb950,color:#3fb950
+  style OAR  fill:#161b22,stroke:#3fb950,color:#3fb950
+  style ANT  fill:#161b22,stroke:#f0883e,color:#f0883e
+  style OAI  fill:#161b22,stroke:#3fb950,color:#3fb950
+  style BM25 fill:#161b22,stroke:#58a6ff,color:#58a6ff
+  style CHR2 fill:#161b22,stroke:#bc8cff,color:#bc8cff
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══════════════════════════ STATUS BAR ═══════════════════════════ -->
+  <footer class="status-bar">
+    <span class="status-item">
+      <span class="status-dot"></span>
+      <span>106 documents indexed</span>
+    </span>
+    <span class="status-sep">·</span>
+    <span class="status-item">
+      <span style="color:var(--purple);">🗄️</span>
+      <span>1 collection (etl_codebase)</span>
+    </span>
+    <span class="status-sep">·</span>
+    <span class="status-item">
+      <span style="color:var(--green);">🧠</span>
+      <span>Backends: Claude claude-opus-4-6 + GPT-4o</span>
+    </span>
+    <span class="status-sep">·</span>
+    <span class="status-item">
+      <span style="color:var(--purple);">🔢</span>
+      <span>Embedding: TF-IDF (offline) + OpenAI text-embedding-3-small</span>
+    </span>
+    <span class="status-sep">·</span>
+    <span style="color:var(--text-dim);margin-left:auto;font-size:11px;">Generated 2026-04-07</span>
+  </footer>
+
+</div>
+
+<script>
+  // ── Tab switching ──────────────────────────────────────────────────
+  const tabs   = document.querySelectorAll('.nav-tab');
+  const panels = document.querySelectorAll('.section-panel');
+  const tabMap = { overview: 'overview', ingestion: 'ingestion', retrieval: 'retrieval', components: 'components' };
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const id = tab.dataset.tab;
+      tabs.forEach(t   => t.classList.remove('active'));
+      panels.forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('panel-' + id).classList.add('active');
+
+      // Re-render mermaid in newly revealed panel (already rendered diagrams are cached)
+      mermaid.run({ querySelector: '#panel-' + id + ' .mermaid' });
+    });
+  });
+
+  // ── Mermaid init ──────────────────────────────────────────────────
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    darkMode: true,
+    securityLevel: 'loose',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", monospace',
+    flowchart: {
+      htmlLabels: true,
+      curve: 'basis',
+      nodeSpacing: 50,
+      rankSpacing: 60,
+      padding: 20
+    },
+    themeVariables: {
+      background:         '#0d1117',
+      mainBkg:            '#161b22',
+      nodeBorder:         '#30363d',
+      clusterBkg:         '#0d1117',
+      titleColor:         '#f0f6fc',
+      primaryColor:       '#161b22',
+      primaryBorderColor: '#30363d',
+      primaryTextColor:   '#c9d1d9',
+      lineColor:          '#58a6ff',
+      secondaryColor:     '#0d1117',
+      tertiaryColor:      '#1f2937',
+      edgeLabelBackground:'#161b22',
+      fontFamily:         '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    }
+  });
+</script>
+</body>
+</html>
