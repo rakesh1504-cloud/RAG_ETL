@@ -1,0 +1,119 @@
+# ============================================================
+# Schema: CUSTOMERS
+# Owner: Data Engineering Team
+# Last updated: 2026-04-07
+# Source system: CRM (Salesforce)
+# Destination: DW.CUSTOMERS (Snowflake)
+# Update frequency: Daily incremental, full refresh on Sundays
+# ============================================================
+
+table: CUSTOMERS
+database: DW
+schema: PUBLIC
+description: >
+  Master customer dimension table. Sourced from the CRM system via the
+  Python ETL pipeline (etl/python/pipeline.py). Loaded using a SCD Type 1
+  merge (latest record wins). The customer_id is the natural key assigned
+  by the CRM and must be treated as immutable.
+
+columns:
+  - name: customer_id
+    type: VARCHAR(10)
+    nullable: false
+    primary_key: true
+    description: >
+      Natural key from the CRM system. Format: C followed by 3 digits (e.g. C001).
+      Never regenerated – if a customer is deleted, the ID is retired, not reused.
+
+  - name: first_name
+    type: VARCHAR(100)
+    nullable: false
+    description: Customer's legal first name. Trimmed, title-cased by ETL macro %trim_all_char.
+
+  - name: last_name
+    type: VARCHAR(100)
+    nullable: false
+    description: Customer's legal last name. Trimmed, title-cased by ETL macro %trim_all_char.
+
+  - name: email
+    type: VARCHAR(255)
+    nullable: true
+    description: >
+      Primary contact email. Validated for format during ETL (must match
+      [a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}). Null allowed for
+      legacy records migrated before 2020 email mandate.
+
+  - name: phone
+    type: VARCHAR(20)
+    nullable: true
+    description: >
+      Contact phone number. Stored in raw CRM format (e.g. (555) 101-2030).
+      Not normalised – downstream applications handle formatting.
+
+  - name: age
+    type: INTEGER
+    nullable: true
+    description: >
+      Customer age in years at time of signup. Derived from date_of_birth if
+      available; otherwise sourced directly from CRM. Valid range: 18–120.
+      Ages outside this range are set to NULL by the ETL validation step.
+
+  - name: signup_date
+    type: DATE
+    nullable: false
+    description: >
+      Date the customer account was created in the CRM. Standardised to
+      ISO 8601 (YYYY-MM-DD) by SAS macro %standardise_dates. Must not be
+      in the future; records with future signup_date are quarantined to
+      DW.CUSTOMERS_QUARANTINE.
+
+  - name: status
+    type: VARCHAR(20)
+    nullable: false
+    description: >
+      Account lifecycle status. Allowed values: active, inactive, suspended.
+      Any other value causes the record to be rejected and logged to
+      DW.ETL_REJECT_LOG. Defaulted to 'active' if NULL on inbound.
+
+  - name: etl_load_ts
+    type: TIMESTAMP
+    nullable: false
+    description: Timestamp when this record was last written by the ETL pipeline. Set by pipeline.py.
+
+  - name: etl_source
+    type: VARCHAR(50)
+    nullable: false
+    description: Identifier of the source system (e.g. "CRM_SF_PROD"). Set by ETLConfig.source_type.
+
+quality_rules:
+  - rule: no_null_customer_id
+    description: customer_id must never be NULL.
+    enforced_by: "%assert_no_nulls(CUSTOMERS, customer_id)"
+
+  - rule: valid_status_values
+    description: status must be one of active, inactive, suspended.
+    enforced_by: "ETLPipeline._validate() category check"
+
+  - rule: age_range_check
+    description: age must be between 18 and 120 inclusive, or NULL.
+    enforced_by: "ETLPipeline._transform() numeric clip"
+
+  - rule: signup_date_not_future
+    description: signup_date must be <= today.
+    enforced_by: "SAS DATA step conditional in etl_customers.sas"
+
+  - rule: email_format
+    description: email must match RFC 5322 simplified pattern when not NULL.
+    enforced_by: "ETLPipeline._validate() regex check"
+
+lineage:
+  source_table: CRM.ACCOUNT
+  extract_query: "SELECT * FROM CRM.ACCOUNT WHERE modified_date >= :last_run"
+  transform_steps:
+    - Trim whitespace from all VARCHAR columns (%trim_all_char)
+    - Standardise signup_date to DATE (%standardise_dates)
+    - Derive age from date_of_birth if available
+    - Validate and quarantine out-of-range / invalid records
+    - SCD Type 1 merge into DW.CUSTOMERS
+  load_script: etl/python/pipeline.py (run_csv_to_rag helper)
+  sas_script: etl/sas/etl_customers.sas

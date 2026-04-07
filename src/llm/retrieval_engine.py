@@ -33,6 +33,7 @@ Key design choices
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -40,6 +41,7 @@ import anthropic
 
 from src.embedding.embedder import Embedder
 from src.retrieval.vector_store import VectorStore
+from src.retrieval.hybrid_retriever import HybridRetriever
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +81,9 @@ class RetrievalResult:
     input_tokens: int
     output_tokens: int
     collections_searched: list[str]
+    confidence: str = "unknown"     # "high" | "medium" | "low" | "unknown"
+    citation_count: int = 0         # number of [N] citations found in answer
+    hybrid_search: bool = False     # True if BM25 + vector RRF was used
 
     def format_sources(self) -> str:
         if not self.sources:
@@ -133,6 +138,12 @@ class RetrievalEngine:
         Enable adaptive thinking (recommended for complex code questions).
     expand_query : bool
         Prepend a brief query expansion step to improve recall.
+    use_hybrid : bool
+        Enable BM25 + vector hybrid search with RRF.  Catches exact keyword
+        hits (macro names, column names) that vector search alone misses.
+    where : dict | None
+        Default metadata filter applied to every search, e.g.
+        ``{"language": {"$eq": "sas"}}``.  Can be overridden per-query.
     """
 
     def __init__(
@@ -144,6 +155,8 @@ class RetrievalEngine:
         max_context_chunks: int     = 8,
         use_thinking: bool          = True,
         expand_query: bool          = False,
+        use_hybrid: bool            = True,
+        where: dict | None          = None,
     ):
         self.model                  = model
         self.collections            = collections or ["etl_codebase"]
@@ -152,10 +165,13 @@ class RetrievalEngine:
         self.max_context_chunks     = max_context_chunks
         self.use_thinking           = use_thinking
         self.expand_query           = expand_query
+        self.use_hybrid             = use_hybrid
+        self.default_where          = where
 
-        self.client  = anthropic.Anthropic()
+        self.client   = anthropic.Anthropic()
         self.embedder = Embedder(tfidf_persist=f"{vector_store_dir}/tfidf_embedder.pkl")
-        self._stores: dict[str, VectorStore] = {}
+        self._stores:    dict[str, VectorStore]     = {}
+        self._hybrids:   dict[str, HybridRetriever] = {}
 
     # ── Vector store accessor ────────────────────────────────────────────────
 
@@ -166,6 +182,16 @@ class RetrievalEngine:
                 persist_dir=self.vector_store_dir,
             )
         return self._stores[collection]
+
+    def _hybrid(self, collection: str) -> HybridRetriever:
+        if collection not in self._hybrids:
+            hr = HybridRetriever(
+                collection_name=collection,
+                vector_store_dir=self.vector_store_dir,
+            )
+            hr.build_bm25_index()
+            self._hybrids[collection] = hr
+        return self._hybrids[collection]
 
     # ── Query expansion (optional) ────────────────────────────────────────────
 
@@ -188,20 +214,68 @@ class RetrievalEngine:
         expansion = next((b.text for b in resp.content if b.type == "text"), question)
         return f"{question}, {expansion}"
 
+    # ── Confidence scoring ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _score_confidence(answer: str, sources: list[SourceReference]) -> tuple[str, int]:
+        """
+        Derive a confidence level from citation coverage in the answer.
+
+        Returns (confidence_label, citation_count).
+        """
+        citations = re.findall(r"\[(\d+)\]", answer)
+        unique_cited = set(int(c) for c in citations if c.isdigit())
+        citation_count = len(unique_cited)
+        n_sources = len(sources)
+
+        if n_sources == 0:
+            return "low", 0
+
+        coverage = citation_count / n_sources if n_sources else 0
+
+        if citation_count == 0:
+            confidence = "low"          # answered with no citations – risk of hallucination
+        elif coverage >= 0.5 and citation_count >= 2:
+            confidence = "high"         # cited ≥50% of sources and ≥2 distinct sources
+        else:
+            confidence = "medium"       # some citations but limited coverage
+
+        return confidence, citation_count
+
     # ── Retrieval ─────────────────────────────────────────────────────────────
 
-    def _retrieve(self, query_text: str) -> list[dict]:
+    def _retrieve(
+        self,
+        query_text: str,
+        where: dict | None = None,
+    ) -> tuple[list[dict], bool]:
         """
-        Embed query, search all collections, merge results, re-rank by distance.
-        Returns list of hit dicts with an added ``collection`` key.
+        Embed query, search all collections, merge results, re-rank.
+        Returns (hits, hybrid_used).
         """
+        effective_where = where or self.default_where
         query_embedding = self.embedder.embed_query(query_text)
         all_hits: list[dict] = []
+        hybrid_used = False
 
         for coll_name in self.collections:
             try:
-                store = self._store(coll_name)
-                hits  = store.search(query_embedding, top_k=self.top_k_per_collection)
+                if self.use_hybrid:
+                    hr = self._hybrid(coll_name)
+                    hits = hr.search(
+                        query_embedding=query_embedding,
+                        query_text=query_text,
+                        top_k=self.top_k_per_collection,
+                        where=effective_where,
+                    )
+                    hybrid_used = hr._bm25_available
+                else:
+                    store = self._store(coll_name)
+                    hits  = store.search(
+                        query_embedding,
+                        top_k=self.top_k_per_collection,
+                        where=effective_where,
+                    )
                 for h in hits:
                     h["collection"] = coll_name
                 all_hits.extend(hits)
@@ -217,7 +291,7 @@ class RetrievalEngine:
 
         # Sort ascending (lower distance = more similar)
         ranked = sorted(seen.values(), key=lambda x: x["distance"])
-        return ranked[: self.max_context_chunks]
+        return ranked[: self.max_context_chunks], hybrid_used
 
     # ── Context builder ───────────────────────────────────────────────────────
 
@@ -296,9 +370,9 @@ class RetrievalEngine:
         # 1. Optionally expand query
         query_text = self._expand_query(question) if self.expand_query else question
 
-        # 2. Retrieve
-        hits = self._retrieve(query_text)
-        context, sources = self._build_context(hits)
+        # 2. Retrieve (hybrid BM25+vector or vector-only)
+        hits, hybrid_used = self._retrieve(query_text)
+        context, sources  = self._build_context(hits)
 
         # 3. Build messages
         messages = self._build_messages(question, context, history)
@@ -316,10 +390,13 @@ class RetrievalEngine:
         # 5. Call Claude
         response = self.client.messages.create(**params)
 
-        answer       = next((b.text for b in response.content if b.type == "text"), "")
+        answer        = next((b.text for b in response.content if b.type == "text"), "")
         thinking_used = any(b.type == "thinking" for b in response.content)
 
-        # 6. Update history (text only – don't carry thinking blocks forward)
+        # 6. Confidence scoring
+        confidence, citation_count = self._score_confidence(answer, sources)
+
+        # 7. Update history (text only – don't carry thinking blocks forward)
         updated_history = list(messages)
         updated_history.append({"role": "assistant", "content": answer})
 
@@ -332,6 +409,9 @@ class RetrievalEngine:
             input_tokens         = response.usage.input_tokens,
             output_tokens        = response.usage.output_tokens,
             collections_searched = self.collections,
+            confidence           = confidence,
+            citation_count       = citation_count,
+            hybrid_search        = hybrid_used,
         )
         return result, updated_history
 
@@ -352,9 +432,9 @@ class RetrievalEngine:
         >>> result = engine.get_last_result()
         """
         query_text = self._expand_query(question) if self.expand_query else question
-        hits       = self._retrieve(query_text)
-        context, sources = self._build_context(hits)
-        messages   = self._build_messages(question, context, history)
+        hits, hybrid_used = self._retrieve(query_text)
+        context, sources  = self._build_context(hits)
+        messages          = self._build_messages(question, context, history)
 
         params: dict = dict(
             model      = self.model,
@@ -381,6 +461,7 @@ class RetrievalEngine:
             final = stream.get_final_message()
 
         answer = "".join(full_answer)
+        confidence, citation_count = self._score_confidence(answer, sources)
 
         # Store last result for post-iteration access
         self._last_result = RetrievalResult(
@@ -392,6 +473,9 @@ class RetrievalEngine:
             input_tokens         = final.usage.input_tokens,
             output_tokens        = final.usage.output_tokens,
             collections_searched = self.collections,
+            confidence           = confidence,
+            citation_count       = citation_count,
+            hybrid_search        = hybrid_used,
         )
         self._last_history = list(messages) + [
             {"role": "assistant", "content": answer}

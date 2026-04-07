@@ -43,12 +43,40 @@ class VectorStore:
             metadatas=metadatas,
         )
 
-    def search(self, query_embedding: list[float], top_k: int = 5) -> list[dict]:
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
+    def search(
+        self,
+        query_embedding: list[float],
+        top_k: int = 5,
+        where: dict | None = None,
+    ) -> list[dict]:
+        """
+        Similarity search against the collection.
+
+        Parameters
+        ----------
+        query_embedding : list[float]
+            Dense query vector.
+        top_k : int
+            Number of results to return.
+        where : dict | None
+            Optional ChromaDB metadata filter, e.g.::
+
+                {"language": {"$eq": "sas"}}
+                {"chunk_type": {"$in": ["macro", "data_step"]}}
+                {"$and": [{"language": {"$eq": "python"}},
+                           {"chunk_type": {"$eq": "function"}}]}
+
+            See https://docs.trychroma.com/guides#filtering-by-metadata
+        """
+        kwargs: dict = dict(
+            query_embeddings = [query_embedding],
+            n_results        = top_k,
+            include          = ["documents", "metadatas", "distances"],
         )
+        if where:
+            kwargs["where"] = where
+
+        results = self.collection.query(**kwargs)
         hits = []
         for doc, meta, dist in zip(
             results["documents"][0],
@@ -57,6 +85,13 @@ class VectorStore:
         ):
             hits.append({"content": doc, "metadata": meta, "distance": dist})
         return hits
+
+    def get_all(self, limit: int = 10_000) -> dict:
+        """Return all documents, metadatas, and ids from the collection."""
+        return self.collection.get(
+            include=["documents", "metadatas"],
+            limit=limit,
+        )
 
     def count(self) -> int:
         return self.collection.count()

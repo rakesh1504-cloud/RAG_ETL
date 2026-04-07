@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 from src.processing.code_chunker import CodeChunk, chunk_file, get_chunker
+from src.processing.doc_chunker import DocChunk, chunk_doc_file, is_doc_file
 from src.embedding.embedder import Embedder, EmbeddedChunk
 from src.retrieval.vector_store import VectorStore
 
@@ -43,7 +44,7 @@ class CodebaseLoader:
         Directory names to skip (e.g. __pycache__, .git).
     """
 
-    SUPPORTED_EXTENSIONS = {".py", ".sas"}
+    SUPPORTED_EXTENSIONS = {".py", ".sas", ".md", ".yaml", ".yml"}
 
     def __init__(
         self,
@@ -61,7 +62,7 @@ class CodebaseLoader:
             collection_name=collection_name,
             persist_dir=vector_store_dir,
         )
-        self.extensions = {e.lower() for e in (extensions or [".py", ".sas"])}
+        self.extensions = {e.lower() for e in (extensions or [".py", ".sas", ".md", ".yaml", ".yml"])}
         self.exclude_dirs = set(exclude_dirs or ["__pycache__", ".git", ".venv", "venv"])
 
     # ── File discovery ──────────────────────────────────────────────────────
@@ -80,12 +81,15 @@ class CodebaseLoader:
 
     # ── Chunking ────────────────────────────────────────────────────────────
 
-    def chunk_files(self, files: list[Path]) -> list[CodeChunk]:
-        """Chunk every file in *files* using the appropriate code chunker."""
-        all_chunks: list[CodeChunk] = []
+    def chunk_files(self, files: list[Path]) -> list[CodeChunk | DocChunk]:
+        """Chunk every file using the appropriate chunker (code or doc)."""
+        all_chunks: list[CodeChunk | DocChunk] = []
         for path in files:
             try:
-                chunks = chunk_file(str(path))
+                if is_doc_file(path):
+                    chunks = chunk_doc_file(str(path))
+                else:
+                    chunks = chunk_file(str(path))
                 print(f"  {str(path.relative_to(self.root_dir.parent)):50s}  →  {len(chunks):3d} chunks")
                 all_chunks.extend(chunks)
             except Exception as exc:
@@ -94,7 +98,7 @@ class CodebaseLoader:
 
     # ── Embedding + storage ─────────────────────────────────────────────────
 
-    def embed_and_store(self, chunks: list[CodeChunk]) -> int:
+    def embed_and_store(self, chunks: list[CodeChunk | DocChunk]) -> int:
         """
         Embed *chunks* and add them to the vector store.
 
@@ -167,7 +171,7 @@ class CodebaseLoader:
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _compute_stats(chunks: list[CodeChunk], files: list[Path]) -> dict:
+    def _compute_stats(chunks: list[CodeChunk | DocChunk], files: list[Path]) -> dict:
         by_lang: dict[str, dict] = {}
         for c in chunks:
             lang = c.language
