@@ -1,0 +1,139 @@
+# ============================================================
+# Azure Knowledge Base – Configuration Reference
+# ============================================================
+# Copy this file to .env or export variables before running.
+# DO NOT commit real keys to source control.
+# ============================================================
+
+# ── Azure OpenAI ─────────────────────────────────────────────
+# Provision: Azure Portal → Azure OpenAI → Create resource
+# Region recommendation: East US 2 or Sweden Central (latest models)
+
+azure_openai:
+  endpoint:         "https://<your-resource-name>.openai.azure.com/"
+  api_key:          ""                    # leave blank to use managed identity
+  api_version:      "2024-02-01"
+
+  deployments:
+    embedding:
+      model:        "text-embedding-3-small"
+      name:         "text-embedding-3-small"   # deployment name in Azure OpenAI Studio
+      dimensions:   1536
+      # Estimated cost: $0.02 / 1M tokens
+
+    chat:
+      model:        "gpt-4o"
+      name:         "gpt-4o"                   # deployment name
+      max_tokens:   4096
+      temperature:  0.2
+      # Estimated cost: $5 / 1M input tokens, $15 / 1M output tokens
+
+  # Environment variables to set:
+  #   export AZURE_OPENAI_ENDPOINT="https://..."
+  #   export AZURE_OPENAI_API_KEY="..."
+  #   export AZURE_OPENAI_EMBED_DEPLOY="text-embedding-3-small"
+  #   export AZURE_OPENAI_CHAT_DEPLOY="gpt-4o"
+  #   export AZURE_OPENAI_API_VERSION="2024-02-01"
+
+
+# ── Azure AI Search ───────────────────────────────────────────
+# Provision: Azure Portal → AI Search → Create
+# Tier recommendation:
+#   Basic    – dev/test, no semantic reranking
+#   Standard – production, enables semantic reranking
+#   Storage Optimised – large corpora (>1M documents)
+
+azure_search:
+  endpoint:         "https://<your-search-name>.search.windows.net"
+  api_key:          ""                    # leave blank to use managed identity
+  index_name:       "etl-codebase"        # created automatically on first run
+
+  index_settings:
+    vector_dimensions: 1536              # must match embedding model output
+    distance_metric:   cosine
+    algorithm:         hnsw
+    semantic_config:   "etl-semantic"    # enables cross-encoder reranking
+
+  # Semantic reranking:
+  #   Requires Standard tier or above.
+  #   Add --no-semantic flag if using Basic tier.
+
+  # Environment variables to set:
+  #   export AZURE_SEARCH_ENDPOINT="https://..."
+  #   export AZURE_SEARCH_API_KEY="..."
+  #   export AZURE_SEARCH_INDEX="etl-codebase"
+
+
+# ── Azure Blob Storage (optional) ────────────────────────────
+# Used to store raw ETL files for audit and re-indexing.
+# Provision: Azure Portal → Storage Account → Create
+
+azure_blob:
+  connection_string: ""                  # or use DefaultAzureCredential
+  container_name:    "etl-codebase-docs"
+  # Files are uploaded with their relative paths as blob names.
+  # e.g. etl/python/pipeline.py → etl/python/pipeline.py in the container.
+
+  # Environment variables to set:
+  #   export AZURE_STORAGE_CONNECTION_STR="DefaultEndpointsProtocol=https;..."
+  #   export AZURE_STORAGE_CONTAINER="etl-codebase-docs"
+
+
+# ── Authentication options ────────────────────────────────────
+# Option 1: API Keys (development)
+#   Set AZURE_OPENAI_API_KEY and AZURE_SEARCH_API_KEY.
+#
+# Option 2: DefaultAzureCredential (recommended for production)
+#   Leave API keys unset. The SDK will try in order:
+#     1. Environment variables (AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET)
+#     2. Managed Identity (if running in Azure)
+#     3. Azure CLI (az login)
+#     4. Visual Studio Code credential
+#
+# Option 3: Managed Identity (AKS, App Service, Azure Functions)
+#   Assign roles:
+#     Cognitive Services User        → on Azure OpenAI resource
+#     Search Index Data Contributor  → on Azure AI Search resource
+#     Storage Blob Data Contributor  → on Storage Account (if using blobs)
+
+
+# ── Quick-start commands ──────────────────────────────────────
+#
+# 1. Set environment variables:
+#      source config/set_azure_env.sh   (create this file from the template above)
+#
+# 2. Index the codebase (first time):
+#      python scripts/query_azure.py --index --dirs etl docs data/schemas
+#
+# 3. Full rebuild:
+#      python scripts/query_azure.py --index --rebuild
+#
+# 4. Interactive query session:
+#      python scripts/query_azure.py
+#
+# 5. Filtered SAS-only query:
+#      python scripts/query_azure.py --filter-lang sas
+#
+# 6. One-shot query:
+#      python scripts/query_azure.py -q "What null checks exist in our SAS pipeline?"
+
+
+# ── Cost estimate (106-document corpus) ──────────────────────
+# Indexing (one-time):
+#   Embedding 106 chunks × ~500 tokens avg = ~53K tokens
+#   text-embedding-3-small: $0.02 / 1M tokens → ~$0.001 (< 1 cent)
+#
+# Per query:
+#   Embedding: ~100 tokens → negligible
+#   GPT-4o: ~3000 input + ~800 output tokens → ~$0.027 per query
+#
+# Azure AI Search (Standard tier): ~$245/month
+# Azure OpenAI: pay-as-you-go, no monthly commitment
+
+
+# ── Required Python packages ─────────────────────────────────
+# pip install \
+#   azure-search-documents>=11.4.0 \
+#   azure-identity>=1.15.0 \
+#   azure-storage-blob>=12.19.0 \
+#   openai>=1.30.0
